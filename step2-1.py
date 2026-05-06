@@ -5,29 +5,7 @@ from sklearn.utils import resample
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import classification_report
-from pathlib import Path
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import json
-
-PLOTS_DIR = Path(__file__).resolve().parent / 'plots'
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def save_bar_plot(series, title, filename, color='#E45756'):
-    ax = series.plot(kind='bar', figsize=(8, 4), color=color)
-    ax.set_title(title)
-    ax.set_xlabel('')
-    ax.set_ylabel('Count')
-    ax.tick_params(axis='x', rotation=0)
-    for container in ax.containers:
-        ax.bar_label(container, padding=2, fontsize=8)
-    plt.tight_layout()
-    out = PLOTS_DIR / filename
-    plt.savefig(out, dpi=200, bbox_inches='tight')
-    plt.close()
-    return out
+from plot_utils import RISK_COLORS, save_bar_plot
 
 # ── تحضير البيانات ──────────────────────────────────────
 ds = load_dataset('lex_glue', 'unfair_tos')
@@ -86,11 +64,16 @@ cuad['risk_level'] = clf.predict(X_cuad)
 print("\nتوزيع risk_level على CUAD:")
 cuad_counts = cuad['risk_level'].value_counts()
 print(cuad_counts)
-plot2 = save_bar_plot(cuad_counts, 'CUAD risk level distribution', 'cuad_phase2_risk_levels.png', color='#F58518')
+plot2 = save_bar_plot(
+    cuad_counts,
+    'CUAD risk level distribution',
+    'cuad_phase2_risk_levels.png',
+    palette=RISK_COLORS,
+    order=['high', 'medium', 'low'],
+)
 print(f"تم حفظ الرسم: {plot2}")
 
 # ── حفظ الناتج ──────────────────────────────────────────
 cuad.to_json('cuad_phase2.jsonl', orient='records',
              lines=True, force_ascii=False)
 print(f"\n✓ cuad_phase2.jsonl — {len(cuad)} بند")
-

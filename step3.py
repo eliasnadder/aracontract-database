@@ -20,28 +20,7 @@
 # print(sample['risk_level'].value_counts())
 
 import pandas as pd
-from pathlib import Path
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-PLOTS_DIR = Path(__file__).resolve().parent / 'plots'
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def save_bar_plot(series, title, filename, color='#54A24B'):
-    ax = series.plot(kind='bar', figsize=(8, 4), color=color)
-    ax.set_title(title)
-    ax.set_xlabel('')
-    ax.set_ylabel('Count')
-    ax.tick_params(axis='x', rotation=0)
-    for container in ax.containers:
-        ax.bar_label(container, padding=2, fontsize=8)
-    plt.tight_layout()
-    out = PLOTS_DIR / filename
-    plt.savefig(out, dpi=200, bbox_inches='tight')
-    plt.close()
-    return out
+from plot_utils import RISK_COLORS, save_bar_plot
 
 # قراءة ناتج المرحلة الثانية
 df = pd.read_json('cuad_phase2.jsonl', lines=True)
@@ -65,7 +44,7 @@ df.loc[mask, 'risk_level'] = 'high'
 mask2 = (
     df['clause_type'] == 'payment_financial'
 ) & df['text'].str.contains(
-    r'minimum.{0,30}(order|volume|purchase|commit)',
+    r'minimum.{0,30}(?:order|volume|purchase|commit)',
     case=False, regex=True
 )
 df.loc[mask2 & (df['risk_level'] == 'low'), 'risk_level'] = 'medium'
@@ -73,7 +52,13 @@ df.loc[mask2 & (df['risk_level'] == 'low'), 'risk_level'] = 'medium'
 print("\nبعد الإصلاح:")
 final_counts = df['risk_level'].value_counts()
 print(final_counts)
-plot = save_bar_plot(final_counts, 'Final risk level distribution', 'cuad_risk_levels.png')
+plot = save_bar_plot(
+    final_counts,
+    'Final risk level distribution',
+    'cuad_risk_levels.png',
+    palette=RISK_COLORS,
+    order=['high', 'medium', 'low'],
+)
 print(f"تم حفظ الرسم: {plot}")
 
 # حفظ الناتج النهائي

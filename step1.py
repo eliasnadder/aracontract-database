@@ -1,27 +1,6 @@
 from datasets import load_dataset
 import pandas as pd
-from pathlib import Path
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-PLOTS_DIR = Path(__file__).resolve().parent / 'plots'
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def save_bar_plot(series, title, filename, color='#4C78A8'):
-    ax = series.plot(kind='bar', figsize=(10, 5), color=color)
-    ax.set_title(title)
-    ax.set_xlabel('')
-    ax.set_ylabel('Count')
-    ax.tick_params(axis='x', rotation=35)
-    for container in ax.containers:
-        ax.bar_label(container, padding=2, fontsize=8)
-    plt.tight_layout()
-    out = PLOTS_DIR / filename
-    plt.savefig(out, dpi=200, bbox_inches='tight')
-    plt.close()
-    return out
+from plot_utils import save_bar_plot
 
 ds = load_dataset(
     'dvgodoy/CUAD_v1_Contract_Understanding_clause_classification'
@@ -73,6 +52,9 @@ for cls, count in dist.items():
     pct = count / total * 100
     flag = "  ⚠ فوق 35%" if pct > 35 else ""
     print(f"  {cls}: {count} ({pct:.1f}%){flag}")
+plot2 = save_bar_plot(dist, 'Filtered CUAD clause type distribution',
+                      'cuad_clause_types.png', color='#4C78A8')
+print(f"تم حفظ الرسم: {plot2}")
 
 # بناء الـ DataFrame النهائي
 df_final = df_filtered[['clause', 'clause_type']].copy()

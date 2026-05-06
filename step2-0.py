@@ -1,27 +1,6 @@
 from datasets import load_dataset
 import pandas as pd
-from pathlib import Path
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-PLOTS_DIR = Path(__file__).resolve().parent / 'plots'
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def save_bar_plot(series, title, filename, color='#4C78A8'):
-    ax = series.plot(kind='bar', figsize=(10, 5), color=color)
-    ax.set_title(title)
-    ax.set_xlabel('')
-    ax.set_ylabel('Count')
-    ax.tick_params(axis='x', rotation=35)
-    for container in ax.containers:
-        ax.bar_label(container, padding=2, fontsize=8)
-    plt.tight_layout()
-    out = PLOTS_DIR / filename
-    plt.savefig(out, dpi=200, bbox_inches='tight')
-    plt.close()
-    return out
+from plot_utils import RISK_COLORS, save_bar_plot
 
 ds = load_dataset('lex_glue', 'unfair_tos')
 df = ds['train'].to_pandas()
@@ -51,7 +30,16 @@ def assign_risk(labels):
 
 df['risk_level'] = df['labels'].apply(assign_risk)
 
-print(df['risk_level'].value_counts())
+risk_counts = df['risk_level'].value_counts()
+print(risk_counts)
+risk_plot = save_bar_plot(
+    risk_counts,
+    'Unfair TOS risk level distribution',
+    'unfair_tos_risk_levels.png',
+    palette=RISK_COLORS,
+    order=['high', 'medium', 'low'],
+)
+print(f"تم حفظ الرسم: {risk_plot}")
 print(f"\nمثال high:\n{df[df['risk_level'] == 'high']['text'].iloc[0][:200]}")
 print(
     f"\nمثال medium:\n{df[df['risk_level'] == 'medium']['text'].iloc[0][:200]}")
