@@ -316,10 +316,10 @@ def main(cuad_path: str, arabic_path: str, outdir: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cuad",    required=True,
-                        help="Path to cuad_phase2_fixed.jsonl")
+                        help="Path to cuad_phase2.jsonl")
     parser.add_argument("--arabic",  required=True,
                         help="Path to arabic_phase3.jsonl")
-    parser.add_argument("--outdir",  default="claude2/",
+    parser.add_argument("--outdir",  default="dataset/",
                         help="Output directory")
     args = parser.parse_args()
 
