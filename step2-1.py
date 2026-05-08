@@ -53,7 +53,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 clf = LogisticRegression(max_iter=1000, class_weight='balanced')
 clf.fit(X_train, y_train)
 
-print("\nتقرير الجودة على Test set:")
+print("\n Report on Test set:")
 print(classification_report(y_test, clf.predict(X_test)))
 
 # ── تطبيق النموذج على CUAD ──────────────────────────────
@@ -61,7 +61,7 @@ cuad = pd.read_json('cuad_phase1.jsonl', lines=True)
 X_cuad = vectorizer.transform(cuad['text'])
 cuad['risk_level'] = clf.predict(X_cuad)
 
-print("\nتوزيع risk_level على CUAD:")
+print("\nClassification of risk_level on CUAD:") 
 cuad_counts = cuad['risk_level'].value_counts()
 print(cuad_counts)
 plot2 = save_bar_plot(
@@ -71,9 +71,9 @@ plot2 = save_bar_plot(
     palette=RISK_COLORS,
     order=['high', 'medium', 'low'],
 )
-print(f"تم حفظ الرسم: {plot2}")
+print(f"Plot saved: {plot2}")
 
 # ── حفظ الناتج ──────────────────────────────────────────
 cuad.to_json('cuad_phase2.jsonl', orient='records',
              lines=True, force_ascii=False)
-print(f"\n✓ cuad_phase2.jsonl — {len(cuad)} بند")
+print(f"\n✓ cuad_phase2.jsonl — {len(cuad)} clauses")

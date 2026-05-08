@@ -5,13 +5,13 @@ from plot_utils import RISK_COLORS, save_bar_plot
 ds = load_dataset('lex_glue', 'unfair_tos')
 df = ds['train'].to_pandas()
 
-print(f"الحجم: {len(df)}")
-print(f"الأعمدة: {df.columns.tolist()}")
-print("\nتوزيع الـ labels:")
-label_counts = df.iloc[:, -1].value_counts()  # آخر عمود غالباً هو الـ label
+print(f"Size: {len(df)}")
+print(f"Columns: {df.columns.tolist()}")
+print("\nLabel distribution:")
+label_counts = df.iloc[:, -1].value_counts()  # Last column is usually the label
 print(label_counts)
 plot = save_bar_plot(label_counts, 'Unfair TOS label distribution', 'unfair_tos_labels.png')
-print(f"تم حفظ الرسم: {plot}")
+print(f"Plot saved: {plot}")
 
 HIGH_RISK = {0, 1, 2}
 MED_RISK = {3, 4, 7}
@@ -39,8 +39,8 @@ risk_plot = save_bar_plot(
     palette=RISK_COLORS,
     order=['high', 'medium', 'low'],
 )
-print(f"تم حفظ الرسم: {risk_plot}")
-print(f"\nمثال high:\n{df[df['risk_level'] == 'high']['text'].iloc[0][:200]}")
+print(f"Plot saved: {risk_plot}")
+print(f"\nExample high:\n{df[df['risk_level'] == 'high']['text'].iloc[0][:200]}")
 print(
-    f"\nمثال medium:\n{df[df['risk_level'] == 'medium']['text'].iloc[0][:200]}")
-print(f"\nمثال low:\n{df[df['risk_level'] == 'low']['text'].iloc[0][:200]}")
+    f"\nExample medium:\n{df[df['risk_level'] == 'medium']['text'].iloc[0][:200]}")
+print(f"\nExample low:\n{df[df['risk_level'] == 'low']['text'].iloc[0][:200]}")

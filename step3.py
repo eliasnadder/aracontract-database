@@ -1,31 +1,10 @@
-# import pandas as pd
-
-# df = pd.read_json('cuad_phase2.jsonl', lines=True)
-
-# print(df.columns.tolist())
-# print(df.head(2))
-
-# # عينة 15% موزعة يدوياً
-# frames = []
-# for lvl in ['high', 'medium', 'low']:
-#     subset = df[df['risk_level'] == lvl].sample(frac=0.15, random_state=42)
-#     frames.append(subset)
-
-# sample = pd.concat(frames).sample(frac=1, random_state=42)
-
-# sample[['text', 'clause_type', 'risk_level']].to_csv(
-#     'review_sample.csv', index=False
-# )
-# print(f"عينة للمراجعة: {len(sample)} بند")
-# print(sample['risk_level'].value_counts())
-
 import pandas as pd
 from plot_utils import RISK_COLORS, save_bar_plot
 
 # قراءة ناتج المرحلة الثانية
 df = pd.read_json('cuad_phase2.jsonl', lines=True)
 
-print("قبل الإصلاح:")
+print("Before fixing:")
 print(df['risk_level'].value_counts())
 
 # إصلاح 1: البنود القصيرة جداً (أسماء شركات) → low
@@ -49,7 +28,7 @@ mask2 = (
 )
 df.loc[mask2 & (df['risk_level'] == 'low'), 'risk_level'] = 'medium'
 
-print("\nبعد الإصلاح:")
+print("\nAfter fixing:")
 final_counts = df['risk_level'].value_counts()
 print(final_counts)
 plot = save_bar_plot(
@@ -59,9 +38,9 @@ plot = save_bar_plot(
     palette=RISK_COLORS,
     order=['high', 'medium', 'low'],
 )
-print(f"تم حفظ الرسم: {plot}")
+print(f"Plot saved: {plot}")
 
 # حفظ الناتج النهائي
 df.to_json('cuad_phase2_fixed.jsonl', orient='records',
            lines=True, force_ascii=False)
-print(f"\n✓ cuad_phase2_fixed.jsonl — {len(df)} بند")
+print(f"\n✓ cuad_phase2_fixed.jsonl — {len(df)} clauses")

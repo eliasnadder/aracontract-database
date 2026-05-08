@@ -315,15 +315,15 @@ def process_dataset(input_dir: str, output_path: str, manifest_path: str = None)
                 "type_clause": clause_type,
                 "risk_level": risk_level,
                 "risk_reason": risk_reason,
-                "source": source_url or f"syrian-lawyer/{category}",
-                "language": "ar",
-                "metadata": {
-                    "document_title": doc_title,
-                    "category": category,
-                    "article_num": art["article_num"],
-                    "confidence": confidence,
-                    "char_count": len(art_text),
-                }
+                # "source": source_url or f"syrian-lawyer/{category}",
+                # "language": "ar",
+                # "metadata": {
+                #     "document_title": doc_title,
+                #     "category": category,
+                #     "article_num": art["article_num"],
+                #     "confidence": confidence,
+                #     "char_count": len(art_text),
+                # }
             }
             records.append(record)
 
