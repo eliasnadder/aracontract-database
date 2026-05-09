@@ -56,8 +56,20 @@ plot2 = save_bar_plot(dist, 'Filtered CUAD clause type distribution',
 print(f"Plot saved: {plot2}")
 
 # بناء الـ DataFrame النهائي
-df_final = df_filtered[['clause', 'clause_type']].copy()
+df_final = df_filtered[['clause', 'clause_type', 'file_name', 'start_at']].copy()
 df_final = df_final.rename(columns={'clause': 'text'})
+
+# ترتيب البنود لحساب موقع البند ضمن العقد
+df_final = df_final.sort_values(['file_name', 'start_at'])
+
+# حساب clause_position و total_clauses
+df_final['clause_position'] = df_final.groupby('file_name').cumcount() + 1
+df_final['total_clauses'] = df_final.groupby('file_name')['file_name'].transform('count')
+
+# إعادة تسمية file_name إلى contract_id وإزالة start_at
+df_final = df_final.rename(columns={'file_name': 'contract_id'})
+df_final = df_final.drop(columns=['start_at'])
+
 df_final['risk_level'] = None
 df_final['risk_reason'] = None
 # df_final['source'] = 'CUAD'

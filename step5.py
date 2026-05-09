@@ -74,12 +74,15 @@ def normalize_cuad(rec: dict) -> dict | None:
         risk = "low"
 
     return {
-        "text":        text,
-        "type_clause": ctype,
-        "risk_level":  risk,
-        "risk_reason": rec.get("risk_reason", ""),
-        "source":      rec.get("source", "cuad"),
-        "language":    rec.get("language", "en"),
+        "text":             text,
+        "type_clause":      ctype,
+        "risk_level":       risk,
+        "risk_reason":      rec.get("risk_reason", ""),
+        # "source":           rec.get("source", "cuad"),
+        "language":         rec.get("language", "en"),
+        "contract_id":      rec.get("contract_id", ""),
+        "clause_position":  rec.get("clause_position", 0),
+        "total_clauses":    rec.get("total_clauses", 0),
     }
 
 
@@ -97,14 +100,18 @@ def normalize_arabic(rec: dict) -> dict | None:
     if risk not in VALID_RISKS:
         risk = "low"
 
-    return {
-        "text":         text,
-        "type_clause":  ctype,
-        "risk_level":   risk,
-        "risk_reason":  rec.get("risk_reason", ""),
-        "source":       rec.get("source", "syrian-lawyer"),
-        "language":     "ar",
+    result = {
+        "text":             text,
+        "type_clause":      ctype,
+        "risk_level":       risk,
+        # "risk_reason":      rec.get("risk_reason", ""),
+        # "source":           rec.get("source", "syrian-lawyer"),
+        "language":         "ar",
+        "contract_id":      rec.get("contract_id", ""),
+        "clause_position":  rec.get("clause_position", 0),
+        "total_clauses":    rec.get("total_clauses", 0),
     }
+    return result
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -189,31 +196,68 @@ def balance_report(records: list[dict], label: str = ""):
     return type_counts, risk_counts
 
 
-# ─── Stratified Split ────────────────────────────────────────────────────────
+# ─── Contract-Aware Stratified Split ─────────────────────────────────────────
 
 def stratified_split(records: list[dict], ratios: tuple) -> tuple:
     """
-    Split preserving type_clause × language distribution.
+    Contract-aware split: all clauses from the same contract go to the
+    same split (train/val/test) to prevent data leakage.
+
+    For Arabic records with contract_id, we split by contract.
+    For CUAD/English records (no contract_id), we split by individual clause
+    preserving type_clause distribution.
+
     Returns (train, val, test).
     """
     from collections import defaultdict
     rng = random.Random(SEED)
+    tr, vr, _ter = ratios
 
-    # Group by (type_clause, language)
-    groups = defaultdict(list)
+    # Separate records with and without contract_id
+    contract_records = defaultdict(list)   # contract_id → [records]
+    standalone_records = defaultdict(list)  # (type_clause, language) → [records]
+
     for r in records:
-        key = (r["type_clause"], r["language"])
-        groups[key].append(r)
+        cid = r.get("contract_id", "")
+        if cid:
+            contract_records[cid].append(r)
+        else:
+            key = (r["type_clause"], r["language"])
+            standalone_records[key].append(r)
 
     train, val, test = [], [], []
-    tr, vr, ter = ratios
 
-    for key, items in groups.items():
+    # ── 1. Split contracts as whole units ─────────────────────────
+    # Group contracts by their dominant clause type for stratification
+    contract_groups = defaultdict(list)  # dominant_type → [contract_id]
+    for cid, clauses in contract_records.items():
+        type_counts = Counter(c["type_clause"] for c in clauses)
+        dominant_type = type_counts.most_common(1)[0][0]
+        contract_groups[dominant_type].append(cid)
+
+    for dtype, cids in contract_groups.items():
+        rng.shuffle(cids)
+        n = len(cids)
+        n_train = max(1, int(n * tr))
+        n_val = max(0, int(n * vr))
+
+        train_cids = cids[:n_train]
+        val_cids = cids[n_train:n_train + n_val]
+        test_cids = cids[n_train + n_val:]
+
+        for cid in train_cids:
+            train.extend(contract_records[cid])
+        for cid in val_cids:
+            val.extend(contract_records[cid])
+        for cid in test_cids:
+            test.extend(contract_records[cid])
+
+    # ── 2. Split standalone records (CUAD) by type ───────────────
+    for key, items in standalone_records.items():
         rng.shuffle(items)
         n = len(items)
         n_train = max(1, int(n * tr))
         n_val = max(0, int(n * vr))
-        # rest goes to test
 
         train += items[:n_train]
         val += items[n_train:n_train + n_val]
@@ -223,7 +267,33 @@ def stratified_split(records: list[dict], ratios: tuple) -> tuple:
     rng.shuffle(val)
     rng.shuffle(test)
 
+    # ── Verify no contract leakage ───────────────────────────────
+    _verify_no_leakage(train, val, test)
+
     return train, val, test
+
+
+def _verify_no_leakage(train, val, test):
+    """Verify that no contract_id appears in more than one split."""
+    def get_cids(records):
+        return {r["contract_id"] for r in records if r.get("contract_id")}
+
+    train_cids = get_cids(train)
+    val_cids = get_cids(val)
+    test_cids = get_cids(test)
+
+    tv = train_cids & val_cids
+    tt = train_cids & test_cids
+    vt = val_cids & test_cids
+
+    if tv or tt or vt:
+        print(f"  ⚠ CONTRACT LEAKAGE DETECTED!")
+        if tv: print(f"    train ∩ val  : {len(tv)} contracts")
+        if tt: print(f"    train ∩ test : {len(tt)} contracts")
+        if vt: print(f"    val ∩ test   : {len(vt)} contracts")
+    else:
+        n_total = len(train_cids | val_cids | test_cids)
+        print(f"  ✓ No contract leakage ({n_total} contracts cleanly split)")
 
 
 # ─── Write JSONL ─────────────────────────────────────────────────────────────

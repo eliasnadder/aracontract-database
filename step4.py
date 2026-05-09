@@ -14,7 +14,9 @@ import re
 import json
 import hashlib
 import argparse
+import unicodedata
 from pathlib import Path
+from collections import Counter
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +100,9 @@ RISK_RULES = [
     # HIGH risk patterns
     ("high", r"(مفسوخ|فسخ العقد|يعتبر مفسوخاً)", "فسخ تلقائي - مخاطرة عالية"),
     ("high", r"(ضمان.*هلاك|مسؤول.*هلاك)", "ضمان الهلاك - مخاطرة عالية"),
-    ("high", r"(إفلاس|إعسار|مدين)", "حالة إفلاس أو إعسار - مخاطرة عالية"),
+    # FIX: مدين was matching مدينة (city). Use word-boundary-aware patterns.
+    ("high", r"(إفلاس|إعسار)", "حالة إفلاس أو إعسار - مخاطرة عالية"),
+    ("high", r"(?<!\bال)مدين(?!ة|ي|ا)", "مديونية - مخاطرة عالية"),
     ("high", r"(حجز.*أموال|تنفيذ.*جبري)", "تنفيذ جبري - مخاطرة عالية"),
     ("high", r"(دونما حاجة.*حكم قضائي|بلا.*أعذار)", "شرط دون إنذار - مخاطرة عالية"),
     ("high", r"(مسؤولية.*جزائية|ملاحقة.*جزائية)", "مسؤولية جزائية - مخاطرة عالية"),
@@ -149,22 +153,62 @@ CATEGORY_BIAS = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  CORE EXTRACTION LOGIC
+# 4.  TEXT NORMALIZATION & CLEANING
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_articles(text: str) -> list[dict]:
+def normalize_arabic(text: str) -> str:
+    """Normalize Arabic text: remove diacritics, unify hamza/alef forms."""
+    text = unicodedata.normalize("NFKC", text)
+    # Remove harakat (tashkeel)
+    text = re.sub(r'[\u064B-\u065F\u0670]', '', text)
+    # Normalize alef variants → bare alef
+    text = text.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
+    # Normalize yaa/alef maqsura
+    text = text.replace('ى', 'ي')
+    return text
+
+
+def clean_clause_text(text: str) -> str:
+    """Remove Markdown formatting artifacts from clause text."""
+    # Remove Markdown links: [text](url) → text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    # Remove standalone URLs
+    text = re.sub(r'https?://\S+', '', text)
+    # Remove bold/italic markers
+    text = re.sub(r'\*{1,2}([^*]*)\*{1,2}', r'\1', text)
+    # Remove heading markers at line start
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Remove decorative lines (dashes, em-dashes)
+    text = re.sub(r'[—–\-]{5,}', '', text)
+    # Collapse multiple whitespace (but preserve single newlines for structure)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5.  CORE EXTRACTION LOGIC
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Pattern to detect the start of a new contract template within a single file
+_CONTRACT_BOUNDARY = re.compile(
+    r'^#{1,2}\s+\*{0,2}\s*(?:عقد|صيغة|نموذج|إنذار)',
+    re.MULTILINE | re.UNICODE
+)
+
+# Pattern to detect article headers: المادة N
+_ARTICLE_PATTERN = re.compile(
+    r'(?:المادة\s*[\d١٢٣٤٥٦٧٨٩٠]+\s*[-–—]?\s*)',
+    re.UNICODE
+)
+
+
+def _extract_articles_single(text: str) -> list[dict]:
     """
-    Extract individual articles (المادة N) from a contract.
+    Extract individual articles (المادة N) from a single contract.
     Returns list of {article_num, text}.
     """
-    # Pattern: المادة + number (Arabic or Western) + optional dash
-    pattern = re.compile(
-        r'(?:المادة\s*[\d١٢٣٤٥٦٧٨٩٠]+\s*[-–—]?\s*)',
-        re.UNICODE
-    )
-
-    # Find all article start positions
-    matches = list(pattern.finditer(text))
+    matches = list(_ARTICLE_PATTERN.finditer(text))
     if not matches:
         return []
 
@@ -181,12 +225,44 @@ def extract_articles(text: str) -> list[dict]:
     return articles
 
 
+def extract_articles(text: str) -> list[dict]:
+    """
+    Extract individual articles from a contract file.
+    Handles files containing multiple contract templates by first
+    splitting on contract boundaries (# عقد..., # صيغة..., etc.),
+    then extracting المادة N from each sub-contract.
+    """
+    # Split on contract boundaries (headings like "# عقد إعارة شيء منقول")
+    boundary_matches = list(_CONTRACT_BOUNDARY.finditer(text))
+
+    if len(boundary_matches) > 1:
+        # Multiple contracts in one file — split and extract from each
+        all_articles = []
+        for i, bm in enumerate(boundary_matches):
+            start = bm.start()
+            end = boundary_matches[i + 1].start() if i + 1 < len(boundary_matches) else len(text)
+            sub_text = text[start:end]
+            all_articles.extend(_extract_articles_single(sub_text))
+
+        # Also extract from text before the first boundary (preamble contract)
+        if boundary_matches[0].start() > 0:
+            preamble = text[:boundary_matches[0].start()]
+            all_articles = _extract_articles_single(preamble) + all_articles
+
+        return all_articles
+
+    # Single contract or no boundary headings — extract directly
+    return _extract_articles_single(text)
+
+
 def get_clause_category(text: str, contract_category: str = "") -> tuple[str, float]:
     """
     Score each clause type, applying category bias.
     Returns (best_type, confidence).
     """
-    text_lower = text.lower()
+    # Normalize text for keyword matching
+    normalized = normalize_arabic(text)
+
     # Get bias for this contract category
     leaf_cat = contract_category.split(
         "/")[-1] if "/" in contract_category else contract_category
@@ -196,7 +272,9 @@ def get_clause_category(text: str, contract_category: str = "") -> tuple[str, fl
     for ctype, info in CLAUSE_RULES.items():
         score = 0
         for kw in info["keywords"]:
-            if kw in text:
+            # Match keyword against normalized text
+            kw_norm = normalize_arabic(kw)
+            if kw_norm in normalized:
                 score += 1
         score *= info["weight"]
         score *= bias.get(ctype, 1.0)
@@ -207,7 +285,7 @@ def get_clause_category(text: str, contract_category: str = "") -> tuple[str, fl
     confidence = scores[best] / total if total > 0 else 0.0
 
     # Fallback: very short or generic text → general_provisions
-    if total == 0 or len(text.strip()) < 30:
+    if total == 0 or len(text.strip()) < 50:
         return "general_provisions", 0.5
 
     return best, round(confidence, 3)
@@ -239,12 +317,22 @@ def get_category_from_path(filepath: str, base_dir: str) -> str:
 
 
 def uid(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
+    """Generate a unique ID for text using SHA-256 (16 hex chars = 64 bits)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  MAIN PIPELINE
+# 6.  MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
+
+def make_contract_id(filepath: str, sub_index: int = 0) -> str:
+    """
+    Generate a stable contract ID from file path + sub-contract index.
+    Used for grouping clauses (not as a training feature).
+    """
+    base = hashlib.sha256(filepath.encode("utf-8")).hexdigest()[:10]
+    return f"ctr_{base}_{sub_index}"
+
 
 def process_dataset(input_dir: str, output_path: str, manifest_path: str = None):
     input_dir = Path(input_dir)
@@ -266,6 +354,11 @@ def process_dataset(input_dir: str, output_path: str, manifest_path: str = None)
     skipped = 0
     seen_hashes = set()
 
+    # ── Pass 1: Extract all clauses with contract grouping ────────────
+    # We collect clauses grouped by contract_id, then enrich with
+    # total_clauses in a second pass.
+    contract_clauses: dict[str, list[dict]] = {}
+
     for filepath in md_files:
         try:
             text = filepath.read_text(encoding="utf-8")
@@ -274,58 +367,73 @@ def process_dataset(input_dir: str, output_path: str, manifest_path: str = None)
             continue
 
         category = get_category_from_path(str(filepath), str(input_dir))
-
-        # Get metadata from manifest if available
         rel_path = str(Path(filepath).relative_to(input_dir))
         meta = manifest_items.get(rel_path, {})
-        source_url = meta.get("url", "")
-        doc_title = meta.get("title", filepath.stem)
 
-        # Extract articles
-        articles = extract_articles(text)
+        # Split into sub-contracts (multi-contract files)
+        boundary_matches = list(_CONTRACT_BOUNDARY.finditer(text))
 
-        # If no articles found, treat the whole document as one chunk
-        if not articles:
-            # Try to get meaningful paragraphs
-            paragraphs = [p.strip()
-                          for p in text.split("\n\n") if len(p.strip()) > 60]
-            articles = [{"article_num": str(i+1), "text": p}
-                        for i, p in enumerate(paragraphs)]
+        if len(boundary_matches) > 1:
+            # Multiple contracts in one file
+            sub_texts = []
+            # Text before first boundary
+            if boundary_matches[0].start() > 0:
+                sub_texts.append(text[:boundary_matches[0].start()])
+            for i, bm in enumerate(boundary_matches):
+                end = boundary_matches[i + 1].start() if i + 1 < len(boundary_matches) else len(text)
+                sub_texts.append(text[bm.start():end])
+        else:
+            sub_texts = [text]
 
-        for art in articles:
-            art_text = art["text"].strip()
+        for sub_idx, sub_text in enumerate(sub_texts):
+            contract_id = make_contract_id(rel_path, sub_idx)
 
-            # Minimum length filter
-            if len(art_text) < 30:
-                skipped += 1
-                continue
+            # Extract articles from this sub-contract
+            articles = _extract_articles_single(sub_text)
 
-            # Deduplication
-            h = uid(art_text)
-            if h in seen_hashes:
-                skipped += 1
-                continue
-            seen_hashes.add(h)
+            # If no articles found, treat as paragraphs
+            if not articles:
+                paragraphs = [p.strip()
+                              for p in sub_text.split("\n\n") if len(p.strip()) > 60]
+                articles = [{"article_num": str(i+1), "text": p}
+                            for i, p in enumerate(paragraphs)]
 
-            clause_type, confidence = get_clause_category(art_text, category)
-            risk_level, risk_reason = get_risk(art_text)
+            clause_position = 0
+            for art in articles:
+                art_text = clean_clause_text(art["text"].strip())
 
-            record = {
-                "text": art_text,
-                "type_clause": clause_type,
-                "risk_level": risk_level,
-                "risk_reason": risk_reason,
-                # "source": source_url or f"syrian-lawyer/{category}",
-                # "language": "ar",
-                # "metadata": {
-                #     "document_title": doc_title,
-                #     "category": category,
-                #     "article_num": art["article_num"],
-                #     "confidence": confidence,
-                #     "char_count": len(art_text),
-                # }
-            }
-            records.append(record)
+                if len(art_text) < 50:
+                    skipped += 1
+                    continue
+
+                h = uid(art_text)
+                if h in seen_hashes:
+                    skipped += 1
+                    continue
+                seen_hashes.add(h)
+
+                clause_position += 1
+                clause_type, confidence = get_clause_category(art_text, category)
+                risk_level, risk_reason = get_risk(art_text)
+
+                record = {
+                    "text": art_text,
+                    "type_clause": clause_type,
+                    "risk_level": risk_level,
+                    "risk_reason": risk_reason,
+                    "contract_id": contract_id,
+                    "clause_position": clause_position,
+                    "total_clauses": 0,  # filled in pass 2
+                }
+
+                contract_clauses.setdefault(contract_id, []).append(record)
+
+    # ── Pass 2: Enrich with total_clauses per contract ────────────────
+    for cid, clauses in contract_clauses.items():
+        total = len(clauses)
+        for rec in clauses:
+            rec["total_clauses"] = total
+            records.append(rec)
 
     # Write JSONL
     with open(output_path, "w", encoding="utf-8") as f:
@@ -333,14 +441,17 @@ def process_dataset(input_dir: str, output_path: str, manifest_path: str = None)
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     # Stats
+    n_contracts = len(contract_clauses)
+    avg_clauses = len(records) / n_contracts if n_contracts else 0
     print(f"\n{'='*50}")
-    print(f"Total records extracted : {len(records)}")
+    print(f"Total contracts         : {n_contracts}")
+    print(f"Total clauses extracted : {len(records)}")
+    print(f"Avg clauses/contract    : {avg_clauses:.1f}")
     print(f"Skipped (short/dup)     : {skipped}")
     print(f"Output written to       : {output_path}")
     print()
 
     # Distribution
-    from collections import Counter
     type_counts = Counter(r["type_clause"] for r in records)
     risk_counts = Counter(r["risk_level"] for r in records)
 
@@ -358,12 +469,11 @@ def process_dataset(input_dir: str, output_path: str, manifest_path: str = None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6.  POST-PROCESSING: balance & quality checks
+# 7.  POST-PROCESSING: balance & quality checks
 # ─────────────────────────────────────────────────────────────────────────────
 
 def check_balance(records: list[dict], max_pct: float = 0.35):
     """Flag over-represented classes."""
-    from collections import Counter
     type_counts = Counter(r["type_clause"] for r in records)
     total = len(records)
     issues = []
